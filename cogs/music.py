@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import discord
 import wavelink
+from discord import app_commands
 from discord.ext import commands
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -575,9 +576,6 @@ class Music(commands.Cog):
         
         await player.disconnect()
         await ctx.send("👋 Бот відключено!")
-
-# Додаємо app_commands для type hints
-from discord import app_commands
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Music(bot))
