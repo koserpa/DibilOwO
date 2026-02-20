@@ -18,13 +18,14 @@ logger = logging.getLogger('MusicBot')
 class MusicBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.message_content = True
+        intents.message_content = True  # Обов'язково для префіксних команд!
         intents.voice_states = True
         
         super().__init__(
-            command_prefix=commands.when_mentioned_or('!', '/'),
+            command_prefix='!',  # Префікс тільки !
             intents=intents,
-            help_command=None
+            help_command=None,
+            case_insensitive=True  # Команди не чутливі до регістру
         )
         
     async def setup_hook(self):
@@ -32,7 +33,7 @@ class MusicBot(commands.Bot):
         await self.load_extension('cogs.music')
         logger.info("Музичний ког завантажено")
         
-        # Синхронізація слеш-команд
+        # Синхронізація слеш-команд (опціонально)
         try:
             synced = await self.tree.sync()
             logger.info(f"Синхронізовано {len(synced)} слеш-команд")
@@ -42,9 +43,10 @@ class MusicBot(commands.Bot):
     async def on_ready(self):
         logger.info(f'{self.user} успішно запущено!')
         logger.info(f'ID бота: {self.user.id}')
+        logger.info(f'Префікс команд: !')
         activity = discord.Activity(
             type=discord.ActivityType.listening,
-            name="музику | /play"
+            name="музику | !play"
         )
         await self.change_presence(activity=activity)
 
@@ -73,6 +75,8 @@ class MusicBot(commands.Bot):
             embed.description = f"Відсутній обов'язковий аргумент: `{error.param.name}`"
         elif isinstance(error, commands.CheckFailure):
             embed.description = "У вас недостатньо прав для цієї команди!"
+        elif isinstance(error, commands.CommandOnCooldown):
+            embed.description = f"Зачекайте {error.retry_after:.1f} секунд перед наступним використанням!"
         else:
             embed.description = f"Сталася помилка: {str(error)}"
             logger.error(f"Помилка команди: {error}", exc_info=True)
@@ -83,18 +87,25 @@ class MusicBot(commands.Bot):
                 if not ctx.interaction.response.is_done():
                     await ctx.interaction.response.send_message(embed=embed, ephemeral=True)
                 else:
-                    # Якщо вже відповіли, використовуємо followup
                     await ctx.interaction.followup.send(embed=embed, ephemeral=True)
             else:
-                # Для текстових команд використовуємо звичайний send
                 await ctx.send(embed=embed)
         except discord.HTTPException as e:
-            if e.code == 40060:  # Interaction already acknowledged
+            if e.code == 40060:
                 logger.warning("Не вдалося відправити повідомлення про помилку: interaction вже acknowledged")
             else:
                 logger.error(f"Помилка відправки повідомлення про помилку: {e}")
         except Exception as e:
             logger.error(f"Неочікувана помилка в on_command_error: {e}")
+    
+    async def on_message(self, message):
+        """Обробник повідомлень - для префіксних команд"""
+        # Ігноруємо повідомлення від ботів
+        if message.author.bot:
+            return
+        
+        # Обробляємо команди
+        await self.process_commands(message)
 
 def main():
     if not Config.TOKEN:
