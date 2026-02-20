@@ -161,6 +161,30 @@ class Music(commands.Cog):
             self.players[guild_id] = MusicPlayer(self.bot, guild_id)
         return self.players[guild_id]
     
+    async def send_response(self, ctx: commands.Context, content=None, *, embed=None, ephemeral=False):
+        """Універсальна функція для відправки відповіді, яка працює з обома типами команд"""
+        try:
+            if ctx.interaction:
+                # Для слеш-команд
+                if ctx.interaction.response.is_done():
+                    # Якщо вже відповіли (defer), використовуємо followup
+                    await ctx.interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
+                else:
+                    # Якщо ще не відповіли
+                    await ctx.interaction.response.send_message(content=content, embed=embed, ephemeral=ephemeral)
+            else:
+                # Для текстових команд
+                await ctx.send(content=content, embed=embed)
+        except discord.HTTPException as e:
+            if e.code == 40060:  # Interaction already acknowledged
+                # Спробуємо через followup
+                try:
+                    await ctx.interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
+                except Exception as e2:
+                    logger.error(f"Не вдалося відправити повідомлення: {e2}")
+            else:
+                raise
+    
     def get_spotify_tracks(self, query: str):
         """Конвертує Spotify посилання в пошукові запити для YouTube"""
         if not self.spotify:
@@ -337,7 +361,7 @@ class Music(commands.Cog):
         
         # Перевірка голосового каналу
         if not ctx.author.voice or not ctx.author.voice.channel:
-            return await ctx.send("❌ Ви маєте бути у голосовому каналі!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Ви маєте бути у голосовому каналі!", ephemeral=True)
         
         voice_channel = ctx.author.voice.channel
         
@@ -348,7 +372,7 @@ class Music(commands.Cog):
             try:
                 player = await voice_channel.connect(cls=wavelink.Player)
             except Exception as e:
-                return await ctx.send(f"❌ Не вдалось підключитись: {e}")
+                return await self.send_response(ctx, f"❌ Не вдалось підключитись: {e}", ephemeral=True)
         elif player.channel != voice_channel:
             await player.move_to(voice_channel)
         
@@ -356,13 +380,14 @@ class Music(commands.Cog):
         music_player = self.get_player(ctx.guild.id)
         music_player.text_channel = ctx.channel
         
-        # Пошук треків
-        await ctx.defer()
+        # Пошук треків - використовуємо defer для довгих операцій
+        if ctx.interaction:
+            await ctx.interaction.response.defer()
         
         tracks = await self.search_tracks(query, ctx.author)
         
         if not tracks:
-            return await ctx.send("❌ Нічого не знайдено!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Нічого не знайдено!", ephemeral=True)
         
         # Додаємо в чергу
         if len(tracks) == 1:
@@ -379,7 +404,7 @@ class Music(commands.Cog):
             embed.add_field(name="Тривалість", value=self.format_duration(track.length), inline=True)
             embed.add_field(name="Позиція в черзі", value=len(music_player.queue._queue), inline=True)
             
-            await ctx.send(embed=embed)
+            await self.send_response(ctx, embed=embed)
         else:
             added = music_player.queue.add_many(tracks)
             embed = discord.Embed(
@@ -387,7 +412,7 @@ class Music(commands.Cog):
                 description=f"Додано **{added}** треків в чергу",
                 color=discord.Color.blue()
             )
-            await ctx.send(embed=embed)
+            await self.send_response(ctx, embed=embed)
         
         # Якщо нічого не грає - починаємо
         if not player.playing:
@@ -399,10 +424,10 @@ class Music(commands.Cog):
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player or not player.playing:
-            return await ctx.send("❌ Зараз нічого не грає!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Зараз нічого не грає!", ephemeral=True)
         
         await player.skip()
-        await ctx.send("⏭️ Трек пропущено!")
+        await self.send_response(ctx, "⏭️ Трек пропущено!")
     
     @commands.hybrid_command(name="stop", description="Зупинити музику та очистити чергу")
     async def stop(self, ctx: commands.Context):
@@ -410,7 +435,7 @@ class Music(commands.Cog):
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player:
-            return await ctx.send("❌ Бот не у голосовому каналі!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Бот не у голосовому каналі!", ephemeral=True)
         
         music_player = self.get_player(ctx.guild.id)
         music_player.queue.clear()
@@ -419,7 +444,7 @@ class Music(commands.Cog):
         await player.disconnect()
         del self.players[ctx.guild.id]
         
-        await ctx.send("⏹️ Музику зупинено та чергу очищено!")
+        await self.send_response(ctx, "⏹️ Музику зупинено та чергу очищено!")
     
     @commands.hybrid_command(name="pause", description="Призупинити музику")
     async def pause(self, ctx: commands.Context):
@@ -427,13 +452,13 @@ class Music(commands.Cog):
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player or not player.playing:
-            return await ctx.send("❌ Зараз нічого не грає!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Зараз нічого не грає!", ephemeral=True)
         
         if player.paused:
-            return await ctx.send("❌ Музика вже призупинена!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Музика вже призупинена!", ephemeral=True)
         
         await player.pause(True)
-        await ctx.send("⏸️ Музику призупинено!")
+        await self.send_response(ctx, "⏸️ Музику призупинено!")
     
     @commands.hybrid_command(name="resume", description="Продовжити музику")
     async def resume(self, ctx: commands.Context):
@@ -441,13 +466,13 @@ class Music(commands.Cog):
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player:
-            return await ctx.send("❌ Бот не у голосовому каналі!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Бот не у голосовому каналі!", ephemeral=True)
         
         if not player.paused:
-            return await ctx.send("❌ Музика вже грає!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Музика вже грає!", ephemeral=True)
         
         await player.pause(False)
-        await ctx.send("▶️ Музику продовжено!")
+        await self.send_response(ctx, "▶️ Музику продовжено!")
     
     @commands.hybrid_command(name="queue", description="Показати чергу")
     async def queue(self, ctx: commands.Context, page: int = 1):
@@ -455,7 +480,7 @@ class Music(commands.Cog):
         music_player = self.get_player(ctx.guild.id)
         
         if music_player.queue.is_empty:
-            return await ctx.send("❌ Черга порожня!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Черга порожня!", ephemeral=True)
         
         tracks, total = music_player.queue.get_queue_list((page - 1) * 10, 10)
         
@@ -477,20 +502,20 @@ class Music(commands.Cog):
         embed.description = "\n".join(description)
         embed.set_footer(text=f"Сторінка {page}/{(total // 10) + 1} | Всього: {total} треків")
         
-        await ctx.send(embed=embed)
+        await self.send_response(ctx, embed=embed)
     
     @commands.hybrid_command(name="loop", description="Увімкнути/вимкнути повтор")
     @app_commands.describe(mode="Режим повтору: off, track, queue")
     async def loop(self, ctx: commands.Context, mode: str = "off"):
         """Режим повтору"""
         if mode not in ["off", "track", "queue"]:
-            return await ctx.send("❌ Доступні режими: `off`, `track`, `queue`", ephemeral=True)
+            return await self.send_response(ctx, "❌ Доступні режими: `off`, `track`, `queue`", ephemeral=True)
         
         music_player = self.get_player(ctx.guild.id)
         music_player.queue.loop_mode = mode
         
         emojis = {"off": "❌", "track": "🔂", "queue": "🔁"}
-        await ctx.send(f"{emojis[mode]} Режим повтору: **{mode}**")
+        await self.send_response(ctx, f"{emojis[mode]} Режим повтору: **{mode}**")
     
     @commands.hybrid_command(name="shuffle", description="Перемішати чергу")
     async def shuffle(self, ctx: commands.Context):
@@ -498,29 +523,29 @@ class Music(commands.Cog):
         music_player = self.get_player(ctx.guild.id)
         
         if music_player.queue.is_empty:
-            return await ctx.send("❌ Черга порожня!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Черга порожня!", ephemeral=True)
         
         music_player.queue.shuffle()
-        await ctx.send("🔀 Чергу перемішано!")
+        await self.send_response(ctx, "🔀 Чергу перемішано!")
     
     @commands.hybrid_command(name="volume", description="Змінити гучність (0-100)")
     @app_commands.describe(volume="Рівень гучності")
     async def volume(self, ctx: commands.Context, volume: int):
         """Гучність"""
         if not 0 <= volume <= 100:
-            return await ctx.send("❌ Гучність має бути від 0 до 100!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Гучність має бути від 0 до 100!", ephemeral=True)
         
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player:
-            return await ctx.send("❌ Бот не у голосовому каналі!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Бот не у голосовому каналі!", ephemeral=True)
         
         await player.set_volume(volume)
         music_player = self.get_player(ctx.guild.id)
         music_player.volume = volume
         
         bar = "█" * (volume // 10) + "░" * (10 - volume // 10)
-        await ctx.send(f"🔊 Гучність: `{bar}` {volume}%")
+        await self.send_response(ctx, f"🔊 Гучність: `{bar}` {volume}%")
     
     @commands.hybrid_command(name="nowplaying", description="Інформація про поточний трек")
     async def nowplaying(self, ctx: commands.Context):
@@ -528,11 +553,11 @@ class Music(commands.Cog):
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player or not player.current:
-            return await ctx.send("❌ Зараз нічого не грає!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Зараз нічого не грає!", ephemeral=True)
         
         music_player = self.get_player(ctx.guild.id)
         embed = self.create_now_playing_embed(player.current, music_player.queue)
-        await ctx.send(embed=embed)
+        await self.send_response(ctx, embed=embed)
     
     @commands.hybrid_command(name="remove", description="Видалити трек з черги")
     @app_commands.describe(position="Позиція треку в черзі")
@@ -541,13 +566,13 @@ class Music(commands.Cog):
         music_player = self.get_player(ctx.guild.id)
         
         if position < 1 or position > len(music_player.queue._queue):
-            return await ctx.send("❌ Невірна позиція!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Невірна позиція!", ephemeral=True)
         
         removed = music_player.queue.remove(position - 1)
         if removed:
-            await ctx.send(f"🗑️ Видалено: **{removed.title}**")
+            await self.send_response(ctx, f"🗑️ Видалено: **{removed.title}**")
         else:
-            await ctx.send("❌ Не вдалось видалити трек!", ephemeral=True)
+            await self.send_response(ctx, "❌ Не вдалось видалити трек!", ephemeral=True)
     
     @commands.hybrid_command(name="jump", description="Перейти до конкретного треку")
     async def jump(self, ctx: commands.Context, position: int):
@@ -555,13 +580,13 @@ class Music(commands.Cog):
         music_player = self.get_player(ctx.guild.id)
         
         if not music_player.queue.jump(position - 1):
-            return await ctx.send("❌ Невірна позиція!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Невірна позиція!", ephemeral=True)
         
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         if player:
             await player.skip()
         
-        await ctx.send(f"⏭️ Перехід до треку #{position}")
+        await self.send_response(ctx, f"⏭️ Перехід до треку #{position}")
     
     @commands.hybrid_command(name="disconnect", description="Відключити бота від каналу")
     async def disconnect(self, ctx: commands.Context):
@@ -569,13 +594,13 @@ class Music(commands.Cog):
         player = wavelink.Pool.get_node().get_player(ctx.guild.id)
         
         if not player:
-            return await ctx.send("❌ Бот не у голосовому каналі!", ephemeral=True)
+            return await self.send_response(ctx, "❌ Бот не у голосовому каналі!", ephemeral=True)
         
         if ctx.guild.id in self.players:
             del self.players[ctx.guild.id]
         
         await player.disconnect()
-        await ctx.send("👋 Бот відключено!")
+        await self.send_response(ctx, "👋 Бот відключено!")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Music(bot))
